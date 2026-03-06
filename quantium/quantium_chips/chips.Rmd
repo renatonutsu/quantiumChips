@@ -1,0 +1,246 @@
+---
+title: "Quantium Virtual Internship - Retail Strategy and Analytics - Task 1"
+mainfont: Roboto
+monofont: Consolas
+output:
+ pdf_document:
+ df_print: default
+ highlight: tango
+ keep_tex: yes
+ latex_engine: xelatex
+header-includes:
+ \usepackage{fvextra}
+---
+
+Bibliotecas e datasets utilizados:
+
+```{r}
+library(data.table)
+library(ggplot2)
+library(stringr)
+
+#transactionData <- QVI_transaction_data.xlsx
+#customerData <- QVI_purchase_behaviour.csv
+transactionData <- as.data.table(transactionData)
+customerData <- as.data.table(customerData)
+```
+
+Análise exploratória de dados
+
+Customer Data
+
+```{r Examinar os dados dos clientes}
+
+str(customerData)
+head(customerData)
+
+```
+
+Transaction data
+
+```{r Examinar os dados de transação}
+str(transactionData)
+head(transactionData)
+```
+
+Como a coluna DATE está em formato numérico, precisamos converter a coluna para formato em data.
+
+```{r Conversão Date para formato em data}
+transactionData$DATE <- as.Date(transactionData$DATE, origin = "1899-12-30")
+```
+
+Vamos verficar se estamos olhando os produtos certos examinando a coluna PROD_NAME
+
+```{r Resumo da coluna PROD_NAME}
+
+table(transactionData$PROD_NAME)
+
+```
+
+```{r}
+productWords <- data.table(unlist(strsplit(unique(transactionData$PROD_NAME)," ")))
+setnames(productWords,'words')
+
+```
+
+Remover dígitos e carcteres especiais
+
+```{r Filtrar somente letras no productWords}
+
+productWords <- productWords[grepl("^[a-zA-Z]+$", words)]
+
+
+```
+
+Tabela de frequencias das palavras
+
+```{r}
+freq_palavras <- productWords[, .N, by = words][order(-N)]
+```
+
+Queremos remover produtos que não são chips, como salsa.
+
+```{r}
+transactionData[, SALSA := grepl("salsa", tolower(PROD_NAME))]
+transactionData <- transactionData[SALSA == FALSE, ][, SALSA := NULL]
+```
+
+Sumario da tabela transactionData. Queremos verificar possíveis valores nulos e outliers
+
+```{r}
+summary(transactionData)
+```
+
+Não temos valores nulos, porem, o PROD_QTY aparenta ter outliers(max 200 pacotes vendidos). Vamos verificar:
+
+```{r}
+transactionData[PROD_QTY == 200]
+```
+
+Encontramos duas transações de 200 pacotes, de um mesmo cliente(LYLTY_CARD_NBR = 226000). Vamos Verificar se este cliente fez mais transações além dessas duas.
+
+```{r}
+transactionData[LYLTY_CARD_NBR == 226000]
+```
+
+Parece que este cliente tem somente duas transações durante o ano e não é um cliente ordinário. Vamos remover este cliente para futuras análises.
+
+```{r}
+transactionData <- transactionData[LYLTY_CARD_NBR != 226000]
+
+```
+
+```{r}
+summary(transactionData)
+```
+
+Contaremos o número de transações por dia para verificar se temos prolemas nos dados.
+
+```{r}
+transacoes_por_dia <- transactionData[, .N, by = DATE]
+summary(transacoes_por_dia)
+```
+
+Percebemos que os dados são coletados de 01/07/2018 até 30/06/2019, porém temos 364 observações em transacoes_por_dia. Possivelmente temos uma data faltando.
+
+Vamos criar uma tabela com todas as datas de 01/07/2018 até 30/06/2019 e comparar com o nossos dados para encontrar a data faltando.
+
+```{r}
+todas_datas <- data.table(
+  DATE = seq(as.Date("2018-07-01"), as.Date("2019-06-30"), by = "day")
+)
+
+calendario_completo <- merge(todas_datas, transacoes_por_dia, by = "DATE", all.x = TRUE)
+```
+
+Encontramos a data faltante, dia 25/12/2018.
+
+```{r fig.align = "center"}
+theme_set(theme_bw())
+theme_update(plot.title = element_text(hjust = 0.5))
+
+ggplot(transacoes_por_dia, aes(x = DATE, y = N)) +
+ geom_line() +
+ labs(x = "Dia", y = "Número de transações", title = "Transações por dia") +
+ scale_x_date(breaks = "1 month") +
+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+```
+
+Vamos dar um zoom no mês de dezembro, onde há um crescimento nas vendas.
+
+```{r}
+mes_dezembro <- transacoes_por_dia[month(DATE) == 12]
+
+theme_set(theme_bw())
+theme_update(plot.title = element_text(hjust = 0.5))
+
+ggplot(mes_dezembro, aes(x = DATE, y = N)) +
+ geom_line() +
+ labs(x = "Dia", y = "Número de transações", title = "Transações por dia em dezembro") +
+ scale_x_date(breaks = "1 day") +
+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+```
+
+Percebemos que há um aumento de venda de chips nos dias anteriores ao Natal, porém no dia exato do Natal(25/12/2018) não há vendas, pois as lojas fecham no Natal.
+
+Agora que os dados não tem mais outliers, vamos criar novas características como tamanho do pacote ou marca dos chips pela coluna PROD_NAME.
+
+```{r}
+transactionData[, PACK_SIZE := parse_number(PROD_NAME)]
+
+transactionData[, .N, PACK_SIZE][order(PACK_SIZE)]
+```
+
+Temos então pacotes de 70g até 380g, o que parece sensato.
+
+Vamos fazer um histograma de PACK_SIZE
+
+```{r}
+packsizeN <- transactionData[, .N, PACK_SIZE]
+
+ggplot(packsizeN, aes(x = factor(PACK_SIZE), y = N)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Distribuição por Tamanho de Embalagem",
+       x = "Tamanho da Embalagem (g)",
+       y = "Número de Ocorrências") +
+  theme_minimal()
+     
+```
+Vamos adicionar também na tabela transactionData a característica marca do produto BRAND.
+```{r}
+transactionData[, BRAND := word(PROD_NAME, 1)]
+
+transactionData[, .N, BRAND][order(BRAND)]
+```
+Obtemos 28 tipos de marca de chips, o que parece sensato.
+Temos algumas marcas que parecem ser o mesmo, então vamos combinar estes juntos.(Red/RRD, Dorito/Doritos, Grain/GrnWves, Infuzions/Infzns, Smith/Smiths, Snbts/Sunbites, WW/Woolworths)
+```{r}
+transactionData[BRAND == "Red", BRAND := "RRD"]
+transactionData[BRAND == "Dorito", BRAND := "Doritos"]
+transactionData[BRAND == "GrnWves", BRAND := "Grain"]
+transactionData[BRAND == "Infzns", BRAND := "Infuzions"]
+transactionData[BRAND == "Smith", BRAND := "Smiths"]
+transactionData[BRAND == "Snbts", BRAND := "Sunbites"]
+transactionData[BRAND == "WW", BRAND := "Woolworths"]
+
+```
+Temos então 21 tipos de marca de chips.
+
+Vamos agora observar o dataset dos clientes, customerData.
+```{r}
+summary(customerData)
+```
+Vamos fazer o histograma de LIFESTAGE e PREMIUM_CUSTOMER 
+```{r}
+LifeN <- customerData[, .N, LIFESTAGE]
+
+ggplot(LifeN, aes(x = N, y = reorder(LIFESTAGE, N))) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "Frequência", y = "Estágio de Vida")
+
+
+PremCusN <- customerData[, .N, PREMIUM_CUSTOMER]
+
+ggplot(PremCusN, aes(x = N, y = reorder(PREMIUM_CUSTOMER, N))) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "Frequência", y = "Tipos de Clientes")
+
+
+```
+
+Vamos criar uma tabela juntando os dados de clientes com transações
+```{r}
+data <- merge(transactionData, customerData, all.x = TRUE)
+```
+Como o número de linhas da tabela data é o mesmo da tabela transactioData, podemos confirmar que nenhuma duplicata foi criada.
+
+Vamos confirmar se não teve nenhum dado faltante(NULLs).
+```{r}
+summary(data)
+```
+Salvar o dataset data em csv
+```{r}
+caminho <- file.path("c:","Users", "renat", "Documents", "quantium", "quantium_chips")
+fwrite(data, paste0(caminho, "QVI_data.csv"))
+```
+
